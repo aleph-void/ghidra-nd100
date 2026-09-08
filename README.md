@@ -109,8 +109,8 @@ The 12-byte header is six big-endian 16-bit words: `Start`, `Restart`, `First1`,
 
 ## See also
 
-- **Source repo:** [HackerCorpLabs/ghidra-nd100](https://github.com/HackerCorpLabs/ghidra-nd100)
-- **Instruction definitions:** [HackerCorpLabs/nd100-definitions](https://github.com/HackerCorpLabs/nd100-definitions) — YAML CPU spec consumed by the C# generator
+- **Source repo:** [RetroCoreLabs/ghidra-nd100](https://github.com/RetroCoreLabs/ghidra-nd100)
+- **Instruction definitions:** [RetroCoreLabs/nd100-definitions](https://github.com/RetroCoreLabs/nd100-definitions) — YAML CPU spec consumed by the C# generator
 - **Norsk Data manuals** for ND-100 architecture and SINTRAN III internals
 
 ## License
