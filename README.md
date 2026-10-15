@@ -115,4 +115,4 @@ The 12-byte header is six big-endian 16-bit words: `Start`, `Restart`, `First1`,
 
 ## License
 
-Apache License 2.0 — see `LICENSE` in the repository root.
+MIT License — see `LICENSE` in the repository root.
