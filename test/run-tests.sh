@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # ND-100 module tests:  test/run-tests.sh [outdir]
 #   1. nd100.slaspec compiles
-#   2. differential p-code cases (test/emu/cases.txt: 400 programs of register operations, memory references and immediate
-#      adds, registers recorded after every instruction from nd100x) in Ghidra's emulator, and a copy with one wrong
-#      expectation (must be the only failure)
+#   2. differential p-code cases (test/emu/cases.txt: ~4900 programs recorded from nd100x: register operations, memory
+#      references, immediate adds, all 2048 shift words, multiply/divide, skips, bit operations, jumps, mixed programs;
+#      registers after every instruction) in Ghidra's emulator, and a copy with one wrong expectation (must be the only failure).
+#      Programs that reach a hardware pcodeop (floating point, normalize, I/O) are skipped and reported.
 #   3. every-entry decode test (CoverageCheck.java)
 #   4. with ND100X=<nd100x binary>: decode differential, all 65536 words against nd100x (nd_oracle.py, nd_decode_cmp.py)
-# Informational (not gating): test/emu/cases_other.txt and cases_shift.txt, programs that still differ (see GHIDRA-RARE.md).
 # Environment: GHIDRA_INSTALL_DIR (Ghidra whose Ghidra/Processors/ND-100 is, or links to, this directory), JAVA_HOME.
 # TMPDIR must not contain a path component starting with a dot.
 set -euo pipefail
@@ -22,7 +22,6 @@ echo "== 2. emulator (differential against recorded nd100x runs)"
 "$HERE/emu-test.sh" "$OUT" || rc=1
 "$HERE/emu-test.sh" --broken "$OUT" || rc=1
 tail -1 "$OUT/emu.txt" | sed 's/^/   /'
-for f in cases_other cases_shift; do echo "   (informational) $f: $("$HERE/emu-diff.sh" "$HERE/emu/$f.txt" "$OUT/$f" 2>&1 | tail -1)"; done
 echo "== 3. every-entry decode test"
 head -c 64 /dev/zero >"$OUT/zero.bin"
 for seed in 1 2; do
@@ -31,8 +30,8 @@ done
 wait
 tot=$(sed -n 's/^coverage: \([0-9]*\) constructors.*/\1/p' "$OUT/cov_1.txt")
 (cat "$OUT"/cov_*.txt | grep '^unreached' || true) | sort | uniq -c | awk '$1==2' | sed 's/^/   /'
-un=$( ( (cat "$OUT"/cov_*.txt | grep '^unreached' || true) | sort | uniq -c | awk '$1==2' | grep -v "jmp_addr" || true) | wc -l)
-echo "   $((tot - $( (cat "$OUT"/cov_*.txt | grep '^unreached' || true) | sort | uniq -c | awk '$1==2' | wc -l)))/$tot constructors reached (the unreached ones are jmp_addr modes that JMP/JPL never use: dead)"
+un=$( ( (cat "$OUT"/cov_*.txt | grep '^unreached' || true) | sort | uniq -c | awk '$1==2' || true) | wc -l)
+echo "   $((tot - $( (cat "$OUT"/cov_*.txt | grep '^unreached' || true) | sort | uniq -c | awk '$1==2' | wc -l)))/$tot constructors reached "
 ((un == 0)) || rc=1
 if [[ -n ${ND100X:-} ]]; then
 	echo "== 4. decode differential against nd100x (all 65536 words)"

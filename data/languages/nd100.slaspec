@@ -287,18 +287,8 @@ entr_err: "*"^reloc  is epsilon [ reloc = inst_start + 2; ] { export *:2 reloc; 
 }
 
 
-:BANC bit4 reg3_d is op9=0x1FC & bit4 & reg3 & reg3_d {  # 177000 octal = 0xFE00, 9-bit mask
-    # 177000 octal = 0xFE00, 9-bit mask
-    local mask:2 = 1 << bit4;                   # Create bit mask
-    STS[2,1] = ((reg3 & mask) == 0) & STS[2,1]; # AND complement of bit with K
-}
 
 
-:BAND bit4 reg3_d is op9=0x1FD & bit4 & reg3 & reg3_d {  # 177200 octal = 0xFE80, 9-bit mask
-    # 177200 octal = 0xFE80, 9-bit mask
-    local mask:2 = 1 << bit4;                   # Create bit mask
-    STS[2,1] = ((reg3 & mask) != 0) & STS[2,1]; # AND bit with K
-}
 
 
 :BFILL is op16=0xC058 {  # 0140130 octal = 0xC058, 16-bit mask
@@ -307,32 +297,12 @@ entr_err: "*"^reloc  is epsilon [ reloc = inst_start + 2; ] { export *:2 reloc; 
 }
 
 
-:BLDA bit4 reg3_d is op9=0x1FB & bit4 & reg3 & reg3_d {  # 176600 octal = 0xFD80, 9-bit mask
-    # 176600 octal = 0xFD80, 9-bit mask
-    local mask:2 = 1 << bit4;                   # Create bit mask
-    STS[2,1] = (reg3 & mask) != 0;              # Load bit value to K
-}
 
 
-:BLDC bit4 reg3_d is op9=0x1FA & bit4 & reg3 & reg3_d {  # 176400 octal = 0xFD00, 9-bit mask
-    # 176400 octal = 0xFD00, 9-bit mask
-    local mask:2 = 1 << bit4;                   # Create bit mask
-    STS[2,1] = (reg3 & mask) == 0;              # Load complement of bit to K
-}
 
 
-:BORA bit4 reg3_d is op9=0x1FF & bit4 & reg3 & reg3_d {  # 177600 octal = 0xFF80, 9-bit mask
-    # 177600 octal = 0xFF80, 9-bit mask
-    local mask:2 = 1 << bit4;                   # Create bit mask
-    STS[2,1] = ((reg3 & mask) != 0) | STS[2,1]; # OR bit with K
-}
 
 
-:BORC bit4 reg3_d is op9=0x1FE & bit4 & reg3 & reg3_d {  # 177400 octal = 0xFF00, 9-bit mask
-    # 177400 octal = 0xFF00, 9-bit mask
-    local mask:2 = 1 << bit4;                   # Create bit mask
-    STS[2,1] = ((reg3 & mask) == 0) | STS[2,1]; # OR complement of bit with K
-}
 
 
 # BSET: Bit Set — 4 condition variants
@@ -340,33 +310,12 @@ entr_err: "*"^reloc  is epsilon [ reloc = inst_start + 2; ] { export *:2 reloc; 
 # K = carry flag = STS bit 6
 
 # BSET ZRO: clear bit (bit <- 0)
-:BSET "ZRO "^bit4^" "^reg3_d is op9=0x1F0 & bit4 & reg3 & reg3_d {
-    local mask:2 = 1 << bit4;
-    reg3 = reg3 & ~mask;
-}
 
 # BSET ONE: set bit (bit <- 1)
-:BSET "ONE "^bit4^" "^reg3_d is op9=0x1F1 & bit4 & reg3 & reg3_d {
-    local mask:2 = 1 << bit4;
-    reg3 = reg3 | mask;
-}
 
 # BSET BCM: complement bit (bit <- ~bit)
-:BSET "BCM "^bit4^" "^reg3_d is op9=0x1F2 & bit4 & reg3 & reg3_d {
-    local mask:2 = 1 << bit4;
-    reg3 = reg3 ^ mask;
-}
 
 # BSET BAC: set bit to carry (bit <- K)
-:BSET "BAC "^bit4^" "^reg3_d is op9=0x1F3 & bit4 & reg3 & reg3_d {
-    local mask:2 = 1 << bit4;
-    if (STS[6,1] != 0) goto <setbit>;
-    reg3 = reg3 & ~mask;
-    goto <done>;
-<setbit>
-    reg3 = reg3 | mask;
-<done>
-}
 
 
 # BSKP: Bit Skip — 4 condition variants
@@ -374,70 +323,16 @@ entr_err: "*"^reloc  is epsilon [ reloc = inst_start + 2; ] { export *:2 reloc; 
 # K = carry flag = STS bit 6
 
 # BSKP ZRO: skip if bit = 0
-:BSKP "ZRO "^bit4^" "^reg3_d^" "^skip_next is op9=0x1F4 & bit4 & reg3 & reg3_d & skip_next {
-    local mask:2 = 1 << bit4;
-    if ((reg3 & mask) != 0) goto <no_skip>;
-    goto skip_next;
-<no_skip>
-}
 
 # BSKP ONE: skip if bit = 1
-:BSKP "ONE "^bit4^" "^reg3_d^" "^skip_next is op9=0x1F5 & bit4 & reg3 & reg3_d & skip_next {
-    local mask:2 = 1 << bit4;
-    if ((reg3 & mask) == 0) goto <no_skip>;
-    goto skip_next;
-<no_skip>
-}
 
 # BSKP BCM: skip if bit != K (bit complement match)
-:BSKP "BCM "^bit4^" "^reg3_d^" "^skip_next is op9=0x1F6 & bit4 & reg3 & reg3_d & skip_next {
-    local mask:2 = 1 << bit4;
-    local bitval:1 = ((reg3 & mask) != 0);
-    local carry:1 = STS[6,1];
-    if (bitval == carry) goto <no_skip>;
-    goto skip_next;
-<no_skip>
-}
 
 # BSKP BAC: skip if bit == K (bit and carry)
-:BSKP "BAC "^bit4^" "^reg3_d^" "^skip_next is op9=0x1F7 & bit4 & reg3 & reg3_d & skip_next {
-    local mask:2 = 1 << bit4;
-    local bitval:1 = ((reg3 & mask) != 0);
-    local carry:1 = STS[6,1];
-    if (bitval != carry) goto <no_skip>;
-    goto skip_next;
-<no_skip>
-}
 
 
-:BSTA bit4 reg3_d is op9=0x1F9 & bit4 & reg3 & reg3_d {  # 176200 octal = 0xFC80, 9-bit mask
-    # 176200 octal = 0xFC80, 9-bit mask
-    # BSTA: Store K to bit, then clear K
-    # C source: setbit(dr, bn, K); setbit(STS, K, 0)
-    local mask:2 = 1 << bit4;                   # Create bit mask
-    if (STS[2,1] != 0) goto <setbit>;
-    reg3 = reg3 & ~mask;                        # Clear bit (carry=0)
-    goto <done>;
-<setbit>
-    reg3 = reg3 | mask;                         # Set bit (carry=1)
-<done>
-    STS[2,1] = 0;                               # Clear K after store
-}
 
 
-:BSTC bit4 reg3_d is op9=0x1F8 & bit4 & reg3 & reg3_d {  # 176000 octal = 0xFC00, 9-bit mask
-    # 176000 octal = 0xFC00, 9-bit mask
-    # BSTC: Store complement of K to bit, then set K to 1
-    # C source: setbit(dr, bn, K^1); setbit(STS, K, 1)
-    local mask:2 = 1 << bit4;                   # Create bit mask
-    if (STS[2,1] == 0) goto <setbit>;
-    reg3 = reg3 & ~mask;                        # Clear bit (carry=1, complement=0)
-    goto <done>;
-<setbit>
-    reg3 = reg3 | mask;                         # Set bit (carry=0, complement=1)
-<done>
-    STS[2,1] = 1;                               # Set K to 1 after store
-}
 
 
 :CHREENTPAGES is op16=0xC0C3 {  # 140303 octal = 0xC0C3, 16-bit mask
@@ -742,8 +637,7 @@ entr_err: "*"^reloc  is epsilon [ reloc = inst_start + 2; ] { export *:2 reloc; 
 
 :JAZ rel_target is op8=0xB2 & rel_target {  # 0131000 octal = 0xB200, 8-bit mask (jump)
     # JAZ: Jump if A is Zero
-    # Ref: Instructions.SequencingInstructions.cs:114 — STS.C = (A == 0); CJP(A == 0)
-    STS[6,1] = (A == 0);                     # Set carry flag to (A == 0)
+    # No flags are affected (jaz.yaml, nd100x); the project's C# emulator sets C = (A == 0), which neither the YAML nor nd100x do
     if (A != 0) goto <no_jump>;               # Skip if A not zero
     goto rel_target;
 <no_jump>

@@ -420,3 +420,222 @@ macro ShiftOp(v, w, typ, n, right, m0, outv, mnew) {
 	STS[7,1] = mnew:1;
 	<done>
 }
+
+# ---------------------------------------------------------------------------------------------------------------------
+# Bit operations (174000-177777): word = 1 1 1 1 | op(4) 7 bits... = op9 | bit(4) | reg(3)
+#   operand register 0 is the status register STS (the bit number then names a flag: 2 = K, 3 = Z, 4 = Q, 5 = O, 6 = C, 7 = M),
+#   1 D, 2 P, 3 B, 4 L, 5 A, 6 T, 7 X. P reads as the address of the next instruction; a modified P is a jump.
+#   K is STS bit 2 (the one-bit accumulator).
+#     BSET ZRO/ONE/BCM/BAC  bit <- 0 / 1 / complement / K
+#     BSKP ZRO/ONE/BCM/BAC  skip the next instruction if bit = 0 / bit = 1 / bit != K / bit = K
+#     BSTC bit <- not K, K <- 1      BSTA bit <- K, K <- 0
+#     BLDC K <- not bit              BLDA K <- bit
+#     BANC K <- K and not bit        BAND K <- K and bit
+#     BORC K <- K or not bit         BORA K <- K or bit
+#   Checked against all 16 operations x bit x register value x K of nd100x and 142+150 random programs.
+# ---------------------------------------------------------------------------------------------------------------------
+bregr: "0"  is rop_dst=0 { export STS; }
+bregr: "DD" is rop_dst=1 { export D; }
+bregr: "DP" is rop_dst=2 { local nx:4 = inst_next; local p:2 = nx:2 >> 1; export p; }
+bregr: "DB" is rop_dst=3 { export B; }
+bregr: "DL" is rop_dst=4 { export L; }
+bregr: "DA" is rop_dst=5 { export A; }
+bregr: "DT" is rop_dst=6 { export T; }
+bregr: "DX" is rop_dst=7 { export X; }
+
+bregw: "0"  is rop_dst=0 { export STS; }
+bregw: "DD" is rop_dst=1 { export D; }
+bregw: "DP" is rop_dst=2 { export P; }
+bregw: "DB" is rop_dst=3 { export B; }
+bregw: "DL" is rop_dst=4 { export L; }
+bregw: "DA" is rop_dst=5 { export A; }
+bregw: "DT" is rop_dst=6 { export T; }
+bregw: "DX" is rop_dst=7 { export X; }
+
+:BSET "ZRO "^bit4^" "^bregw is op9=0x1f0 & bit4 & bregr & bregw & rop_dnum {
+	local m:2 = 1 << bit4;
+	local dsel:1 = rop_dnum;
+	local v:2 = bregr;
+	local k:1 = STS[2,1];
+	local b:1 = ((v & m) != 0);
+	local nv:2 = v & ~m;
+	bregw = nv;
+	if (dsel != 2) goto <nojump>;
+	goto [P];
+	<nojump>
+}
+
+:BSET "ONE "^bit4^" "^bregw is op9=0x1f1 & bit4 & bregr & bregw & rop_dnum {
+	local m:2 = 1 << bit4;
+	local dsel:1 = rop_dnum;
+	local v:2 = bregr;
+	local k:1 = STS[2,1];
+	local b:1 = ((v & m) != 0);
+	local nv:2 = v | m;
+	bregw = nv;
+	if (dsel != 2) goto <nojump>;
+	goto [P];
+	<nojump>
+}
+
+:BSET "BCM "^bit4^" "^bregw is op9=0x1f2 & bit4 & bregr & bregw & rop_dnum {
+	local m:2 = 1 << bit4;
+	local dsel:1 = rop_dnum;
+	local v:2 = bregr;
+	local k:1 = STS[2,1];
+	local b:1 = ((v & m) != 0);
+	local nv:2 = v ^ m;
+	bregw = nv;
+	if (dsel != 2) goto <nojump>;
+	goto [P];
+	<nojump>
+}
+
+:BSET "BAC "^bit4^" "^bregw is op9=0x1f3 & bit4 & bregr & bregw & rop_dnum {
+	local m:2 = 1 << bit4;
+	local dsel:1 = rop_dnum;
+	local v:2 = bregr;
+	local k:1 = STS[2,1];
+	local b:1 = ((v & m) != 0);
+	local nv:2 = v & ~m;
+	if (k == 0) goto <st>;
+	nv = v | m;
+	<st>
+	bregw = nv;
+	if (dsel != 2) goto <nojump>;
+	goto [P];
+	<nojump>
+}
+
+:BSKP "ZRO "^bit4^" "^bregw^" "^skip_next is op9=0x1f4 & bit4 & bregr & bregw & rop_dnum & skip_next {
+	local m:2 = 1 << bit4;
+	local dsel:1 = rop_dnum;
+	local v:2 = bregr;
+	local k:1 = STS[2,1];
+	local b:1 = ((v & m) != 0);
+	if (b != 0) goto <no>;
+	goto skip_next;
+	<no>
+}
+
+:BSKP "ONE "^bit4^" "^bregw^" "^skip_next is op9=0x1f5 & bit4 & bregr & bregw & rop_dnum & skip_next {
+	local m:2 = 1 << bit4;
+	local dsel:1 = rop_dnum;
+	local v:2 = bregr;
+	local k:1 = STS[2,1];
+	local b:1 = ((v & m) != 0);
+	if (b == 0) goto <no>;
+	goto skip_next;
+	<no>
+}
+
+:BSKP "BCM "^bit4^" "^bregw^" "^skip_next is op9=0x1f6 & bit4 & bregr & bregw & rop_dnum & skip_next {
+	local m:2 = 1 << bit4;
+	local dsel:1 = rop_dnum;
+	local v:2 = bregr;
+	local k:1 = STS[2,1];
+	local b:1 = ((v & m) != 0);
+	if (b == k) goto <no>;
+	goto skip_next;
+	<no>
+}
+
+:BSKP "BAC "^bit4^" "^bregw^" "^skip_next is op9=0x1f7 & bit4 & bregr & bregw & rop_dnum & skip_next {
+	local m:2 = 1 << bit4;
+	local dsel:1 = rop_dnum;
+	local v:2 = bregr;
+	local k:1 = STS[2,1];
+	local b:1 = ((v & m) != 0);
+	if (b != k) goto <no>;
+	goto skip_next;
+	<no>
+}
+
+:BSTC bit4^" "^bregw is op9=0x1f8 & bit4 & bregr & bregw & rop_dnum {
+	local m:2 = 1 << bit4;
+	local dsel:1 = rop_dnum;
+	local v:2 = bregr;
+	local k:1 = STS[2,1];
+	local b:1 = ((v & m) != 0);
+	local nv:2 = v & ~m;
+	if (k != 0) goto <st>;
+	nv = v | m;
+	<st>
+	bregw = nv;
+	STS[2,1] = 1;
+	if (dsel != 2) goto <nojump>;
+	goto [P];
+	<nojump>
+}
+
+:BSTA bit4^" "^bregw is op9=0x1f9 & bit4 & bregr & bregw & rop_dnum {
+	local m:2 = 1 << bit4;
+	local dsel:1 = rop_dnum;
+	local v:2 = bregr;
+	local k:1 = STS[2,1];
+	local b:1 = ((v & m) != 0);
+	local nv:2 = v & ~m;
+	if (k == 0) goto <st>;
+	nv = v | m;
+	<st>
+	bregw = nv;
+	STS[2,1] = 0;
+	if (dsel != 2) goto <nojump>;
+	goto [P];
+	<nojump>
+}
+
+:BLDC bit4^" "^bregw is op9=0x1fa & bit4 & bregr & bregw & rop_dnum {
+	local m:2 = 1 << bit4;
+	local dsel:1 = rop_dnum;
+	local v:2 = bregr;
+	local k:1 = STS[2,1];
+	local b:1 = ((v & m) != 0);
+	STS[2,1] = (b == 0);
+}
+
+:BLDA bit4^" "^bregw is op9=0x1fb & bit4 & bregr & bregw & rop_dnum {
+	local m:2 = 1 << bit4;
+	local dsel:1 = rop_dnum;
+	local v:2 = bregr;
+	local k:1 = STS[2,1];
+	local b:1 = ((v & m) != 0);
+	STS[2,1] = b;
+}
+
+:BANC bit4^" "^bregw is op9=0x1fc & bit4 & bregr & bregw & rop_dnum {
+	local m:2 = 1 << bit4;
+	local dsel:1 = rop_dnum;
+	local v:2 = bregr;
+	local k:1 = STS[2,1];
+	local b:1 = ((v & m) != 0);
+	STS[2,1] = k & (b == 0);
+}
+
+:BAND bit4^" "^bregw is op9=0x1fd & bit4 & bregr & bregw & rop_dnum {
+	local m:2 = 1 << bit4;
+	local dsel:1 = rop_dnum;
+	local v:2 = bregr;
+	local k:1 = STS[2,1];
+	local b:1 = ((v & m) != 0);
+	STS[2,1] = k & b;
+}
+
+:BORC bit4^" "^bregw is op9=0x1fe & bit4 & bregr & bregw & rop_dnum {
+	local m:2 = 1 << bit4;
+	local dsel:1 = rop_dnum;
+	local v:2 = bregr;
+	local k:1 = STS[2,1];
+	local b:1 = ((v & m) != 0);
+	STS[2,1] = k | (b == 0);
+}
+
+:BORA bit4^" "^bregw is op9=0x1ff & bit4 & bregr & bregw & rop_dnum {
+	local m:2 = 1 << bit4;
+	local dsel:1 = rop_dnum;
+	local v:2 = bregr;
+	local k:1 = STS[2,1];
+	local b:1 = ((v & m) != 0);
+	STS[2,1] = k | b;
+}
+

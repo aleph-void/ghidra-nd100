@@ -6,6 +6,7 @@ registers, the status register and data memory), initial A D T X B L STS random,
 B- and X-relative accesses stay out of the code; the registers after every instruction are taken from the nd100x trace."""
 import sys, os, random, subprocess, struct, re
 
+PAD = 60
 NDX = os.environ.get('ND100X', os.path.expanduser('~/.cache/ghidra-rare-scratch/community-verify/ND100/nd100x/build_release/bin/nd100x'))
 
 def bpun(words, start):
@@ -30,6 +31,16 @@ def pool(kind):
         return op | mode | random.randrange(0, 16)
     if kind == 'imm':        # 17xxxx: AAA/AAB/AAT/AAX/SAA... add immediate to register
         return random.randrange(0o170000, 0o174000)
+    if kind == 'jmp':        # forward P-relative jumps and links, 1-6 words ahead
+        return r([0o124000, 0o134000, 0o130000, 0o130400, 0o131000, 0o131400, 0o132000, 0o132400, 0o133000, 0o133400]) | random.randrange(1, 7)
+    if kind == 'mixed':
+        return pool(r(['rop', 'rop', 'mem', 'mem', 'imm', 'shift', 'skp', 'mul', 'bit', 'jmp']))
+    if kind == 'bit':        # bit operations 174000-177777
+        while True:
+            w = random.randrange(0o174000, 0o200000)
+            if (w & 7) == 0 and ((w >> 3) & 15) >= 8:     # STS bits 8-15 select the program level (register set): not modelled
+                continue
+            return w
     if kind == 'shift':
         return random.randrange(0o154000, 0o160000)
     if kind == 'skp':
@@ -42,7 +53,7 @@ def run_nd(words, init, steps):
     path = os.path.join(os.environ.get('TMPDIR', '/tmp'), 'nddiff_%d.bpun' % os.getpid())
     # program at 0x100; also preload registers: run a small prologue? registers are set by the program itself
     open(path, 'wb').write(bpun(words, 0o400))
-    r = subprocess.run([NDX, '--boot=bpun', '--image=' + path, '--cputype=ND110CX', '-t', '-n', str(steps)], capture_output=True, text=True, timeout=60)
+    r = subprocess.run([NDX, '--boot=bpun', '--image=' + path, '--cputype=ND110CX', '-t', '-n', str(steps)], capture_output=True, text=True, timeout=10)
     states = []
     for ln in r.stderr.splitlines():
         m = re.search(r' A=([0-7]+) D=([0-7]+) T=([0-7]+) X=([0-7]+) B=([0-7]+) L=([0-7]+) P=([0-7]+) STS=([0-9A-Fa-f]+)', ln)
@@ -57,18 +68,21 @@ def gen(out, count, seed, only=None):
     with open(out, 'w') as f:
         made = 0
         for k in range(count):
-            kinds = [only] * n if only else random.choices(['rop', 'mem', 'imm', 'shift', 'skp', 'mul'], [8, 6, 3, 3, 1, 1], k=n)
+            kinds = [only] * n if only else random.choices(['rop', 'mem', 'imm', 'shift', 'skp', 'mul', 'bit', 'jmp'], [8, 6, 3, 3, 2, 1, 3, 2], k=n)
             body = [pool(kd) for kd in kinds]
-            total = 6 + n                       # prologue (6 words) + body; the literals follow
+            total = 6 + n + PAD                 # prologue (6 words) + body + zero padding (STZ, harmless if reached by a jump); the literals follow
             lits = [random.randrange(65536) for _ in range(5)]
             lits[3] = 0x4000                    # B (data accesses of B-relative modes stay clear of the code)
             def ld(op, idx, lit):               # P-relative load of literal 'lit' (displacement is signed 8 bits)
                 return op | (((total + lit) - idx) & 0xFF)
             # LDA lit0; LDT lit1; LDX lit2; LDA lit3; RADD CLD SA,DB (A -> B); LDA lit4
             prog = [ld(0o044000, 0, 0), ld(0o050000, 1, 1), ld(0o054000, 2, 2), ld(0o044000, 3, 3),
-                    0o146100 | (5 << 3) | 3, ld(0o044000, 5, 4)] + body + lits
+                    0o146100 | (5 << 3) | 3, ld(0o044000, 5, 4)] + body + [0] * PAD + lits
             steps = 6 + n
-            sts = run_nd(prog, None, steps)
+            try:
+                sts = run_nd(prog, None, steps)
+            except subprocess.TimeoutExpired:
+                continue        # an instruction that hangs the emulator run (halt/wait): no recorded states
             if len(sts) < steps + 1:
                 continue
             f.write('case r%d\ncode %s\ninit %s\nsteps %d\n' % (k, ' '.join('%04x' % w for w in prog), ' '.join('%04x' % x for x in sts[0]), steps))
