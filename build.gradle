@@ -39,4 +39,7 @@ buildExtension {
 	exclude 'lib/*-src.zip'
 	exclude 'ghidra_scripts/'
 	exclude 'os/'
+	exclude 'test/**'
+	exclude '**/*.pdf'
+	exclude '**/*.lock'
 }
