@@ -78,6 +78,61 @@ def gen(out, count, seed, only=None):
             made += 1
     print('%d programs' % made)
 
+def gen_shift_all(out):
+    """every shift word 154000-157777 once (value set by word, link flag M before the shift 0 or 1)"""
+    vals = [(0x8001, 0x1234, 0x4321), (0xA5C3, 0x5A3C, 0x0F0F)]
+    from multiprocessing import Pool
+    jobs = [(w, vals[w & 1], (w >> 1) & 1) for w in range(0o154000, 0o160000)]
+    with Pool(6) as p:
+        res = p.map(_shift_prog, jobs, chunksize=20)
+    with open(out, 'w') as f:
+        for w, prog, steps, sts in res:
+            f.write('case sh%06o\ncode %s\ninit %s\nsteps %d\n' % (w, ' '.join('%04x' % x for x in prog), ' '.join('%04x' % x for x in sts[0]), steps))
+            for st in sts[1:steps + 1]:
+                f.write('state %s\n' % ' '.join('%04x' % x for x in st))
+            f.write('end\n')
+    print('%d programs' % len(res))
+
+def _shift_prog(job):
+    w, (a, t, d), m = job
+    if m:      # LDA 8000; SHA 1 sets the link flag M
+        prog = [0o044000 | 7, 0o154401, 0o044000 | 6, 0o050000 | 6, 0o054000 | 6, 0o146100 | (7 << 3) | 1, w, 0x8000, a, t, d]
+        steps = 7
+    else:
+        prog = [0o044000 | 5, 0o050000 | 5, 0o054000 | 5, 0o146100 | (7 << 3) | 1, w, a, t, d]
+        steps = 5
+    return (w, prog, steps, run_nd(prog, None, steps))
+
+def _md_prog(job):
+    op, a, t, d = job
+    prog = [0o044000 | 5, 0o050000 | 5, 0o054000 | 5, 0o146100 | (7 << 3) | 1, op, a, t, d]
+    return (op, a, t, d, prog, run_nd(prog, None, 5))
+
+def gen_muldiv(out):
+    """RMPY and RDIV over special values and random pairs (A=a, T=t, D=d before the instruction)"""
+    random.seed(77)
+    vals = [0, 1, 2, 3, 0x7fff, 0x8000, 0x8001, 0xffff, 0xfffe, 0x4000, 0x00ff, 0x1234, 0xa5c3]
+    rmpy = 0o141200 | (6 << 3) | 5      # RMPY ST DA
+    rdiv = 0o141600 | (6 << 3)          # RDIV ST
+    jobs = [(rmpy, a, t, 0x1111) for a in vals for t in vals]
+    jobs += [(rmpy, random.randrange(65536), random.randrange(65536), 0) for _ in range(150)]
+    jobs += [(rdiv, a, t, d) for a in vals for d in (0, 1, 0x8000, 0xffff, 0x1234) for t in vals]
+    jobs += [(rdiv, random.randrange(65536), random.randrange(1, 65536), random.randrange(65536)) for _ in range(300)]
+    from multiprocessing import Pool
+    with Pool(6) as p:
+        res = p.map(_md_prog, jobs, chunksize=20)
+    with open(out, 'w') as f:
+        for i, (op, a, t, d, prog, sts) in enumerate(res):
+            f.write('case %s%d\ncode %s\ninit %s\nsteps 5\n' % ('rmpy' if op < 0o141400 else 'rdiv', i, ' '.join('%04x' % x for x in prog), ' '.join('%04x' % x for x in sts[0])))
+            for st in sts[1:6]:
+                f.write('state %s\n' % ' '.join('%04x' % x for x in st))
+            f.write('end\n')
+    print('%d programs' % len(res))
+
 if __name__ == '__main__':
-    if sys.argv[1] == 'gen':
+    if sys.argv[1] == 'muldiv':
+        gen_muldiv(sys.argv[2])
+    elif sys.argv[1] == 'shiftall':
+        gen_shift_all(sys.argv[2])
+    elif sys.argv[1] == 'gen':
         gen(sys.argv[2], int(sys.argv[3]), int(sys.argv[4]), sys.argv[5] if len(sys.argv) > 5 else None)

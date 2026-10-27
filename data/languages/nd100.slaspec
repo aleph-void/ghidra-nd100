@@ -638,10 +638,6 @@ entr_err: "*"^reloc  is epsilon [ reloc = inst_start + 2; ] { export *:2 reloc; 
 # IDENT: Identify interrupt device — query device ID at priority level
 # C source: level = operand & 0x3F; gA = ident(level)
 # Full constructor to use level6 field (bits 5-0) instead of rop_src/rop_dst
-:IDENT level6 is op10=0x31E & level6 {
-    local level:1 = level6;
-    A = nd100_ident(level);
-}
 
 
 :INIT is op16=0xC05C {  # 0140134 octal = 0xC05C, 16-bit mask
@@ -759,6 +755,13 @@ entr_err: "*"^reloc  is epsilon [ reloc = inst_start + 2; ] { export *:2 reloc; 
 # All other modes use goto [ea] for computed/indirect targets
 
 # Mode 0: P-relative (uses jmp_addr sub-table for disassembly-resolved arrows)
+# IDENT: transfer the IDENT code of the device with the highest priority on interrupt level 10-13 to A. Only these four
+# level codes exist (nd100-definitions ident.yaml, nd100x decodes only these): PL10=004 PL11=011 PL12=022 PL13=043.
+:IDENT "PL10" is op10=0x31E & level6=0x04 { A = nd100_ident(10:1); }
+:IDENT "PL11" is op10=0x31E & level6=0x09 { A = nd100_ident(11:1); }
+:IDENT "PL12" is op10=0x31E & level6=0x12 { A = nd100_ident(12:1); }
+:IDENT "PL13" is op10=0x31E & level6=0x23 { A = nd100_ident(13:1); }
+
 :JMP jmp_addr is op5=0x15 & X_bit=0 & I_bit=0 & B_bit=0 & jmp_addr {
     goto jmp_addr;
 }
@@ -1290,37 +1293,6 @@ entr_err: "*"^reloc  is epsilon [ reloc = inst_start + 2; ] { export *:2 reloc; 
 }
 
 
-:SAD shift_operand is op5=0x1B & shift_reg=0x3 & shift_operand {  # 0154600 octal = 0xD980, shift non-contiguous mask
-    # SAD: Shift A:D double register (32-bit) — 4 types: Arithmetic/ROT/ZIN/LIN
-    # C source: ShiftDoubleReg((A<<16)|D, operand)
-    local ad:4 = (zext(A) << 16) | zext(D);
-    local stype:2 = (shift_operand >> 7) & 3;
-    local sdir:2 = (shift_operand >> 5) & 1;
-    local cnt:2 = shift_operand & 0x1F;
-
-    if (sdir != 0) goto <right>;
-    if (stype == 1) goto <rot_left>;
-    ad = ad << cnt;
-    goto <split>;
-<rot_left>
-    ad = (ad << cnt) | (ad >> (32 - cnt));
-    goto <split>;
-
-<right>
-    local rcount:2 = 32 - cnt;
-    if (stype == 1) goto <rot_right>;
-    if (stype == 2) goto <zin_right>;
-    ad = ad s>> rcount;
-    goto <split>;
-<rot_right>
-    ad = (ad >> rcount) | (ad << (32 - rcount));
-    goto <split>;
-<zin_right>
-    ad = ad >> rcount;
-<split>
-    A = ad(2);                                # High 16 bits
-    D = ad:2;                                 # Low 16 bits
-}
 
 
 :SASB disp3 is op10=0x307 & disp3 & fixed3=0x1 {  # 140701 octal = 0xC1C1, 10-bit mask
@@ -1384,73 +1356,8 @@ entr_err: "*"^reloc  is epsilon [ reloc = inst_start + 2; ] { export *:2 reloc; 
 }
 
 
-:SHA shift_operand is op5=0x1B & shift_reg=0x2 & shift_operand {  # 0154400 octal = 0xD900, shift non-contiguous mask
-    # SHA: Shift A register — 4 types: Arithmetic/ROT/ZIN/LIN
-    # C source: ShiftReg(gA, operand)
-    # shift_operand encodes: bits 8-7=type, bit 5=dir, bits 4-0=count
-    local stype:2 = (shift_operand >> 7) & 3;
-    local sdir:2 = (shift_operand >> 5) & 1;
-    local cnt:2 = shift_operand & 0x1F;
-
-    if (sdir != 0) goto <right>;
-    # --- Left shift ---
-    if (stype == 1) goto <rot_left>;
-    # Arith/ZIN/LIN left all fill with 0
-    A = A << cnt;
-    goto <done>;
-<rot_left>
-    local lcnt:2 = cnt & 0xF;
-    A = (A << lcnt) | (A >> (16 - lcnt));
-    goto <done>;
-
-<right>
-    # --- Right shift ---
-    local rcount:2 = 32 - cnt;
-    if (stype == 1) goto <rot_right>;
-    if (stype == 2) goto <zin_right>;
-    # Arithmetic right (type 0) and LIN right (type 3, approx — M flag not modeled)
-    A = A s>> rcount;
-    goto <done>;
-<rot_right>
-    local rcnt:2 = rcount & 0xF;
-    A = (A >> rcnt) | (A << (16 - rcnt));
-    goto <done>;
-<zin_right>
-    A = A >> rcount;                      # ZIN right = logical shift (zero fill)
-<done>
-}
 
 
-:SHD shift_operand is op5=0x1B & shift_reg=0x1 & shift_operand {  # 154200 octal = 0xD880, shift non-contiguous mask
-    # SHD: Shift D register — 4 types: Arithmetic/ROT/ZIN/LIN
-    # C source: ShiftReg(gD, operand)
-    local stype:2 = (shift_operand >> 7) & 3;
-    local sdir:2 = (shift_operand >> 5) & 1;
-    local cnt:2 = shift_operand & 0x1F;
-
-    if (sdir != 0) goto <right>;
-    if (stype == 1) goto <rot_left>;
-    D = D << cnt;
-    goto <done>;
-<rot_left>
-    local lcnt:2 = cnt & 0xF;
-    D = (D << lcnt) | (D >> (16 - lcnt));
-    goto <done>;
-
-<right>
-    local rcount:2 = 32 - cnt;
-    if (stype == 1) goto <rot_right>;
-    if (stype == 2) goto <zin_right>;
-    D = D s>> rcount;
-    goto <done>;
-<rot_right>
-    local rcnt:2 = rcount & 0xF;
-    D = (D >> rcnt) | (D << (16 - rcnt));
-    goto <done>;
-<zin_right>
-    D = D >> rcount;
-<done>
-}
 
 
 :SHDE is op16=0xC056 {  # 0140126 octal = 0xC056, 16-bit mask
@@ -1460,36 +1367,6 @@ entr_err: "*"^reloc  is epsilon [ reloc = inst_start + 2; ] { export *:2 reloc; 
 }
 
 
-:SHT shift_operand is op5=0x1B & shift_reg=0x0 & shift_operand {  # 0154000 octal = 0xD800, shift non-contiguous mask
-    # SHT: Shift T register — 4 types: Arithmetic/ROT/ZIN/LIN
-    # C source: ShiftReg(gT, operand)
-    local stype:2 = (shift_operand >> 7) & 3;
-    local sdir:2 = (shift_operand >> 5) & 1;
-    local cnt:2 = shift_operand & 0x1F;
-
-    if (sdir != 0) goto <right>;
-    if (stype == 1) goto <rot_left>;
-    T = T << cnt;
-    goto <done>;
-<rot_left>
-    local lcnt:2 = cnt & 0xF;
-    T = (T << lcnt) | (T >> (16 - lcnt));
-    goto <done>;
-
-<right>
-    local rcount:2 = 32 - cnt;
-    if (stype == 1) goto <rot_right>;
-    if (stype == 2) goto <zin_right>;
-    T = T s>> rcount;
-    goto <done>;
-<rot_right>
-    local rcnt:2 = rcount & 0xF;
-    T = (T >> rcnt) | (T << (16 - rcnt));
-    goto <done>;
-<zin_right>
-    T = T >> rcount;
-<done>
-}
 
 
 # SKP: Skip next instruction if condition true

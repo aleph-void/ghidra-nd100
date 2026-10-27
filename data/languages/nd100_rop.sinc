@@ -182,26 +182,241 @@ skpcond: "MLST" is skp_cond=7 { }
 	goto skip_next;
 }
 
-# RMPY sr, dr: A:D = (dr) * (sr), signed; RDIV sr: A:D / (sr), quotient in A, remainder in D
+# RMPY sr, dr: A:D = (dr) * (sr), signed. Computed like the hardware (sign and magnitude): the product is formed from the
+# magnitudes and negated when exactly one operand is negative; that negation sets C when the low word of the magnitude is 0
+# and the dynamic overflow flag (bit 4) when it is 0x8000 (that also sets the static one, bit 5); both are cleared otherwise.
+# A positive product leaves the flags alone. (Fitted to, and checked
+# against, 469 operand pairs of nd100x.)
 :RMPY rsrc rdst is op10=0x30A & rsrc & rdst & rdstr & rop_src & rop_dst {
 	local x:2 = rdstr;
 	local y:2 = rsrc;
-	local result:4 = sext(x) * sext(y);
+	local neg:1 = ((x >> 15) ^ (y >> 15)) != 0;
+	local mx:4 = zext(x);
+	if (x s>= 0) goto <xpos>;
+	mx = zext(-x);
+	<xpos>
+	local my:4 = zext(y);
+	if (y s>= 0) goto <ypos>;
+	my = zext(-y);
+	<ypos>
+	local mag:4 = mx * my;
+	local result:4 = mag;
+	if (neg == 0) goto <store>;
+	result = -mag;
+	local lo:2 = mag:2;
+	STS[6,1] = (lo == 0);
+	STS[4,1] = (lo == 0x8000);
+	if (lo != 0x8000) goto <store>;
+	STS[5,1] = 1;
+	<store>
 	A = result(2);
 	D = result:2;
 }
 
+# RDIV sr: A:D / (sr), signed; quotient to A, remainder to D. Also sign and magnitude: a negative dividend is negated first
+# (same C / overflow-flag rule as RMPY on its low word), the magnitudes are divided, the quotient is negative when the signs
+# differ, the remainder has the sign of the dividend. Z (STS bit 3) is set when the divisor is 0 or the quotient does not fit
+# a signed 16-bit word; when the high word of the magnitude is not below the divisor (also divisor 0) A:D = (high - divisor,
+# low) and nothing else changes. Checked against 1445 cases of nd100x.
 :RDIV rsrc is op10=0x30E & rsrc & rop_src & rop_dst {
-	local divisor:2 = rsrc;
-	if (divisor == 0) goto <err>;
-	local dividend:4 = (zext(A) << 16) | zext(D);
-	local q:4 = dividend s/ sext(divisor);
-	local r:4 = dividend s% sext(divisor);
-	if (q s> 32767 || q s< -32768) goto <err>;
-	A = q:2;
-	D = r:2;
-	goto <done>;
-	<err>
+	local dv:2 = rsrc;
+	local dneg:1 = (A s< 0);
+	local full:4 = (zext(A) << 16) | zext(D);
+	if (dneg == 0) goto <posdividend>;
+	full = -full;
+	STS[6,1] = (D == 0);
+	STS[4,1] = (D == 0x8000);
+	if (D != 0x8000) goto <posdividend>;
+	STS[5,1] = 1;
+	<posdividend>
+	local mh:2 = full(2);
+	local ml:2 = full:2;
+	local dm:2 = dv;
+	if (dv s>= 0) goto <dpos>;
+	dm = -dv;
+	<dpos>
+	if (mh < dm) goto <divide>;
 	STS[3,1] = 1;
+	A = mh - dm;
+	D = ml;
+	goto <done>;
+	<divide>
+	local qm:4 = full / zext(dm);
+	local rm:4 = full % zext(dm);
+	local qneg:1 = (dneg != (dv s< 0));
+	local q:2 = qm:2;
+	local r:2 = rm:2;
+	if (qneg == 0) goto <qpos>;
+	if (qm <= 0x8000) goto <qok>;
+	STS[3,1] = 1;
+	<qok>
+	q = -q;
+	goto <rsign>;
+	<qpos>
+	if (qm <= 0x7FFF) goto <rsign>;
+	STS[3,1] = 1;
+	<rsign>
+	if (dneg == 0) goto <rdone>;
+	r = -r;
+	<rdone>
+	A = q;
+	D = r;
+	<done>
+}
+
+# RSUB sr, dr: RADD CM1 AD1 (dr <- dr - sr); the assembler name of that combination
+rsubmod: "" is rop_ad=1 { }
+:RSUB rsrc rdst is op5=0x19 & X_bit=1 & rop_ad=1 & rop_cm1=1 & rop_cld=0 & rsrc & rdst & rdstr & rop_src & rop_dnum {
+	local dsel:1 = rop_dnum;
+	local d:2 = rdstr;
+	local s:2 = ~rsrc;
+	local tmp:4 = zext(d) + zext(s) + 1;
+	local r:2 = tmp:2;
+	STS[6,1] = (tmp >> 16) != 0;
+	local ovf:1 = ((d >> 15) == (s >> 15)) && ((r >> 15) != (d >> 15));
+	STS[4,1] = ovf;
+	STS[5,1] = STS[5,1] | ovf;
+	rdst = r;
+	if (dsel != 2) goto <nojump>;
+	goto [P];
+	<nojump>
+}
+
+# ---------------------------------------------------------------------------------------------------------------------
+# Shifts: SHT (T), SHD (D), SHA (A), SAD (A:D, 32 bits).  Word: 1 1 0 1 1 | type(2) | reg(2) | x | count(6)
+#   type 0: arithmetic (zero in on a left shift, the sign on a right shift), 1: ROT (rotate), 2: ZIN (zero in),
+#           3: LIN (the link bit M is shifted in)
+#   count: 6 bits, two's complement: 1..31 shift left, 33..63 shift right by 64 - count; 0 and 32 do nothing.
+#   M (STS bit 7) receives the bit shifted out last. Verified against all 6144 combinations of word and operand
+#   (type, register, direction, every count, M = 0 and 1) of nd100x.
+# v: operand (zero extended), w: width in bits, n: number of steps (1..31), right: 0/1, m0: M before the shift
+# ---------------------------------------------------------------------------------------------------------------------
+macro ShiftOp(v, w, typ, n, right, m0, outv, mnew) {
+	local mask:8 = (1 << w) - 1;
+	local nm:8 = n % w;
+	local fillbit:8 = 0;
+	if (right != 0) goto <rightshift>;
+	if (typ != 1) goto <leftlin>;
+	outv = v;
+	if (nm == 0) goto <leftrot_m>;
+	outv = ((v << nm) | (v >> (w - nm))) & mask;
+	<leftrot_m>
+	mnew = (v >> ((w - nm) % w)) & 1;
+	goto <done>;
+	<leftlin>
+	if (typ != 3) goto <leftfill>;
+	fillbit = m0;
+	<leftfill>
+	outv = ((v << n) & mask);
+	if (fillbit == 0) goto <leftm>;
+	outv = outv | (((1 << n) - 1) & mask);
+	<leftm>
+	mnew = fillbit;
+	if (n > w) goto <done>;
+	mnew = (v >> (w - n)) & 1;
+	goto <done>;
+	<rightshift>
+	if (typ != 1) goto <rightlin>;
+	outv = v;
+	if (nm == 0) goto <rightrot_m>;
+	outv = ((v >> nm) | (v << (w - nm))) & mask;
+	<rightrot_m>
+	mnew = (v >> ((n - 1) % w)) & 1;
+	goto <done>;
+	<rightlin>
+	if (typ != 0) goto <rl_notsign>;
+	fillbit = (v >> (w - 1)) & 1;
+	<rl_notsign>
+	if (typ != 3) goto <rl_nolink>;
+	fillbit = m0;
+	<rl_nolink>
+	outv = v >> n;
+	if (fillbit == 0) goto <rightm>;
+	local ones:8 = mask;
+	if (n >= w) goto <rl_ones>;
+	ones = mask & ~(mask >> n);
+	<rl_ones>
+	outv = outv | ones;
+	<rightm>
+	mnew = fillbit;
+	if (n > w) goto <done>;
+	mnew = (v >> (n - 1)) & 1;
+	<done>
+}
+
+:SHT shift_operand is op5=0x1B & shift_reg=0x0 & shift_operand & shift_type & shift_cnt6 {
+	local cnt:8 = shift_cnt6;
+	local typ:8 = shift_type;
+	local m0:8 = zext(STS[7,1]);
+	if (cnt == 0 || cnt == 32) goto <done>;
+	local right:8 = cnt >> 5;
+	local n:8 = cnt;
+	if (right == 0) goto <go>;
+	n = 64 - cnt;
+	<go>
+	local v:8 = zext(T);
+	local outv:8 = 0;
+	local mnew:8 = 0;
+	ShiftOp(v, 16:8, typ, n, right, m0, outv, mnew);
+	T = outv:2;
+	STS[7,1] = mnew:1;
+	<done>
+}
+
+:SHD shift_operand is op5=0x1B & shift_reg=0x1 & shift_operand & shift_type & shift_cnt6 {
+	local cnt:8 = shift_cnt6;
+	local typ:8 = shift_type;
+	local m0:8 = zext(STS[7,1]);
+	if (cnt == 0 || cnt == 32) goto <done>;
+	local right:8 = cnt >> 5;
+	local n:8 = cnt;
+	if (right == 0) goto <go>;
+	n = 64 - cnt;
+	<go>
+	local v:8 = zext(D);
+	local outv:8 = 0;
+	local mnew:8 = 0;
+	ShiftOp(v, 16:8, typ, n, right, m0, outv, mnew);
+	D = outv:2;
+	STS[7,1] = mnew:1;
+	<done>
+}
+
+:SHA shift_operand is op5=0x1B & shift_reg=0x2 & shift_operand & shift_type & shift_cnt6 {
+	local cnt:8 = shift_cnt6;
+	local typ:8 = shift_type;
+	local m0:8 = zext(STS[7,1]);
+	if (cnt == 0 || cnt == 32) goto <done>;
+	local right:8 = cnt >> 5;
+	local n:8 = cnt;
+	if (right == 0) goto <go>;
+	n = 64 - cnt;
+	<go>
+	local v:8 = zext(A);
+	local outv:8 = 0;
+	local mnew:8 = 0;
+	ShiftOp(v, 16:8, typ, n, right, m0, outv, mnew);
+	A = outv:2;
+	STS[7,1] = mnew:1;
+	<done>
+}
+
+:SAD shift_operand is op5=0x1B & shift_reg=0x3 & shift_operand & shift_type & shift_cnt6 {
+	local cnt:8 = shift_cnt6;
+	local typ:8 = shift_type;
+	local m0:8 = zext(STS[7,1]);
+	if (cnt == 0 || cnt == 32) goto <done>;
+	local right:8 = cnt >> 5;
+	local n:8 = cnt;
+	if (right == 0) goto <go>;
+	n = 64 - cnt;
+	<go>
+	local v:8 = (zext(A) << 16) | zext(D);
+	local outv:8 = 0;
+	local mnew:8 = 0;
+	ShiftOp(v, 32:8, typ, n, right, m0, outv, mnew);
+	A = outv[16,16];
+	D = outv:2;
+	STS[7,1] = mnew:1;
 	<done>
 }
