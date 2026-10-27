@@ -5,5 +5,5 @@
     local tmp:4 = sext(A) * sext(memval);     # 32-bit signed multiply
     A = tmp:2;                                # Store low 16 bits
     local overflow:1 = (tmp s> 32767) | (tmp s< -32767);
-    STS[5,5] = overflow;                      # O = overflow (dynamic)
-    STS[4,4] = STS[4,4] | overflow;           # Q = sticky overflow
+    STS[5,1] = overflow;                      # O = overflow (dynamic)
+    STS[4,1] = STS[4,1] | overflow;           # Q = sticky overflow

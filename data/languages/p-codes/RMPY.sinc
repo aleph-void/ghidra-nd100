@@ -6,4 +6,4 @@
     A = result(2);                                # High 16 bits to A
     D = result:2;                                 # Low 16 bits to D
     # C = 1 if result doesn't fit in 16 bits (check absolute value)
-    STS[6,6] = (result s> 32767) | (result s< -32768);
+    STS[6,1] = (result s> 32767) | (result s< -32768);

@@ -9,9 +9,9 @@
     if (ovf != 0) goto <overflow>;
     A = quotient:2;                                # Quotient to A
     D = remainder:2;                               # Remainder to D
-    STS[6,6] = 0;                                  # C = 0 (fits in 16 bits)
+    STS[6,1] = 0;                                  # C = 0 (fits in 16 bits)
     goto <done>;
 <div_zero>
 <overflow>
-    STS[3,3] = 1;                                  # Z = 1 (error flag, bit 3)
+    STS[3,1] = 1;                                  # Z = 1 (error flag, bit 3)
 <done>

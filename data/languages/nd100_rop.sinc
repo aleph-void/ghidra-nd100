@@ -1,0 +1,207 @@
+# ND-100 register operations (ROP): SWAP, RAND, REXO, RORA, RADD (and the aliases COPY, RSUB, RINC, RDCR, RCLR, EXIT).
+#
+# Word layout:  1 1 0 0 1 x x x | CM1 CLD | sr(3) | dr(3)   (bits 15-8: 0xC8 SWAP, C9 RAND, CA REXO, CB RORA, CC-CE RADD)
+# Register numbers: 0 = "0" (reads as zero; a write is lost), 1 D, 2 P, 3 B, 4 L, 5 A, 6 T, 7 X.
+# During the execution of an instruction P already points to the next instruction, so P as a source reads inst_next;
+# a result written to P is a jump.
+# Modifiers: CLD uses zero instead of the destination as an operand, CM1 uses the 1's complement of the source.
+
+rsrc: "0"  is rop_src=0 { local z:2 = 0; export z; }
+rsrc: "SD" is rop_src=1 { export D; }
+rsrc: "SP" is rop_src=2 { local nx:4 = inst_next; local p:2 = nx:2 >> 1; export p; }
+rsrc: "SB" is rop_src=3 { export B; }
+rsrc: "SL" is rop_src=4 { export L; }
+rsrc: "SA" is rop_src=5 { export A; }
+rsrc: "ST" is rop_src=6 { export T; }
+rsrc: "SX" is rop_src=7 { export X; }
+
+rdst: "0"  is rop_dst=0 { local z:2 = 0; export z; }
+rdst: "DD" is rop_dst=1 { export D; }
+rdst: "DP" is rop_dst=2 { export P; }
+rdst: "DB" is rop_dst=3 { export B; }
+rdst: "DL" is rop_dst=4 { export L; }
+rdst: "DA" is rop_dst=5 { export A; }
+rdst: "DT" is rop_dst=6 { export T; }
+rdst: "DX" is rop_dst=7 { export X; }
+
+# the destination as an operand (read): P reads as the address of the next instruction
+rdstr: "0"  is rop_dst=0 { local z:2 = 0; export z; }
+rdstr: "DD" is rop_dst=1 { export D; }
+rdstr: "DP" is rop_dst=2 { local nx:4 = inst_next; local p:2 = nx:2 >> 1; export p; }
+rdstr: "DB" is rop_dst=3 { export B; }
+rdstr: "DL" is rop_dst=4 { export L; }
+rdstr: "DA" is rop_dst=5 { export A; }
+rdstr: "DT" is rop_dst=6 { export T; }
+rdstr: "DX" is rop_dst=7 { export X; }
+
+rmod: ""        is rop_cm1=0 & rop_cld=0 { }
+rmod: " CLD"    is rop_cm1=0 & rop_cld=1 { }
+rmod: " CM1"    is rop_cm1=1 & rop_cld=0 { }
+rmod: " CM1 CLD" is rop_cm1=1 & rop_cld=1 { }
+
+radmod: ""     is rop_ad=0 { }
+radmod: " AD1" is rop_ad=1 { }
+radmod: " ADC" is rop_ad=2 { }
+
+# the operands of a register operation after the modifiers: d = (CLD ? 0 : dr), s = (CM1 ? ~sr : sr)
+macro RopOperands(d, s, dr, sr, cld, cm1) {
+	d = dr;
+	if (cld == 0) goto <dok>;
+	d = 0;
+	<dok>
+	s = sr;
+	if (cm1 == 0) goto <sok>;
+	s = ~s;
+	<sok>
+}
+
+:RADD^radmod^rmod rsrc rdst is op5=0x19 & X_bit=1 & radmod & rmod & rsrc & rdst & rdstr & rop_ad & rop_cm1 & rop_cld & rop_dnum {
+	local cld:1 = rop_cld;
+	local cm1:1 = rop_cm1;
+	local dsel:1 = rop_dnum;
+	local ad:1 = rop_ad;
+	local d:2 = 0;
+	local s:2 = 0;
+	RopOperands(d, s, rdstr, rsrc, cld, cm1);
+	local addend:2 = 0;
+	if (ad == 0) goto <noad>;
+	addend = 1;
+	if (ad == 1) goto <noad>;
+	addend = zext(STS[6,1]);
+	<noad>
+	local tmp:4 = zext(d) + zext(s) + zext(addend);
+	local r:2 = tmp:2;
+	STS[6,1] = (tmp >> 16) != 0;
+	local ovf:1 = ((d >> 15) == (s >> 15)) && ((r >> 15) != (d >> 15));
+	STS[4,1] = ovf;
+	STS[5,1] = STS[5,1] | ovf;
+	rdst = r;
+	if (dsel != 2) goto <nojump>;
+	goto [P];
+	<nojump>
+}
+
+:RAND^rmod rsrc rdst is op8=0xC9 & rmod & rsrc & rdst & rdstr & rop_cm1 & rop_cld & rop_dnum {
+	local cld:1 = rop_cld;
+	local cm1:1 = rop_cm1;
+	local dsel:1 = rop_dnum;
+	local d:2 = 0;
+	local s:2 = 0;
+	RopOperands(d, s, rdstr, rsrc, cld, cm1);
+	rdst = d & s;
+	if (dsel != 2) goto <nojump>;
+	goto [P];
+	<nojump>
+}
+
+:REXO^rmod rsrc rdst is op8=0xCA & rmod & rsrc & rdst & rdstr & rop_cm1 & rop_cld & rop_dnum {
+	local cld:1 = rop_cld;
+	local cm1:1 = rop_cm1;
+	local dsel:1 = rop_dnum;
+	local d:2 = 0;
+	local s:2 = 0;
+	RopOperands(d, s, rdstr, rsrc, cld, cm1);
+	rdst = d ^ s;
+	if (dsel != 2) goto <nojump>;
+	goto [P];
+	<nojump>
+}
+
+:RORA^rmod rsrc rdst is op8=0xCB & rmod & rsrc & rdst & rdstr & rop_cm1 & rop_cld & rop_dnum {
+	local cld:1 = rop_cld;
+	local cm1:1 = rop_cm1;
+	local dsel:1 = rop_dnum;
+	local d:2 = 0;
+	local s:2 = 0;
+	RopOperands(d, s, rdstr, rsrc, cld, cm1);
+	rdst = d | s;
+	if (dsel != 2) goto <nojump>;
+	goto [P];
+	<nojump>
+}
+
+# SWAP: the destination receives the (CM1: complemented) source, the source receives the (CLD: cleared) destination
+:SWAP^rmod rsrc rdst is op8=0xC8 & rmod & rsrc & rdst & rdstr & rop_cm1 & rop_cld & rop_dnum {
+	local cld:1 = rop_cld;
+	local cm1:1 = rop_cm1;
+	local dsel:1 = rop_dnum;
+	local d:2 = 0;
+	local s:2 = 0;
+	RopOperands(d, s, rdstr, rsrc, cld, cm1);
+	rdst = s;
+	rsrc = d;
+	if (dsel != 2) goto <nojump>;
+	goto [P];
+	<nojump>
+}
+
+# SKP IF dr cond sr: skip the next instruction if the condition on the flags of (dr) - (sr) holds
+skpcond: "EQL"  is skp_cond=0 { }
+skpcond: "GEQ"  is skp_cond=1 { }
+skpcond: "GRE"  is skp_cond=2 { }
+skpcond: "MGRE" is skp_cond=3 { }
+skpcond: "UEQ"  is skp_cond=4 { }
+skpcond: "LSS"  is skp_cond=5 { }
+skpcond: "LST"  is skp_cond=6 { }
+skpcond: "MLST" is skp_cond=7 { }
+
+:SKP "IF" rdstr skpcond rsrc^" "^skip_next is op5=0x18 & skp_fixed=0x0 & skpcond & rdstr & rsrc & rop_src & rop_dst & skp_cond & skip_next {
+	local d:2 = rdstr;
+	local s:2 = rsrc;
+	local diff:2 = d - s;
+	local cond:1 = skp_cond;
+	local neg:1 = diff s< 0;
+	local zero:1 = diff == 0;
+	local ovf:1 = sborrow(d, s);
+	local uge:1 = d >= s;
+	local take:1 = 0;
+	if (cond != 0) goto <c1>;
+	take = zero; goto <go>;
+	<c1>
+	if (cond != 1) goto <c2>;
+	take = !neg; goto <go>;
+	<c2>
+	if (cond != 2) goto <c3>;
+	take = !(neg ^ ovf); goto <go>;
+	<c3>
+	if (cond != 3) goto <c4>;
+	take = uge; goto <go>;
+	<c4>
+	if (cond != 4) goto <c5>;
+	take = !zero; goto <go>;
+	<c5>
+	if (cond != 5) goto <c6>;
+	take = neg; goto <go>;
+	<c6>
+	if (cond != 6) goto <c7>;
+	take = neg ^ ovf; goto <go>;
+	<c7>
+	take = !uge;
+	<go>
+	if (take == 0) goto inst_next;
+	goto skip_next;
+}
+
+# RMPY sr, dr: A:D = (dr) * (sr), signed; RDIV sr: A:D / (sr), quotient in A, remainder in D
+:RMPY rsrc rdst is op10=0x30A & rsrc & rdst & rdstr & rop_src & rop_dst {
+	local x:2 = rdstr;
+	local y:2 = rsrc;
+	local result:4 = sext(x) * sext(y);
+	A = result(2);
+	D = result:2;
+}
+
+:RDIV rsrc is op10=0x30E & rsrc & rop_src & rop_dst {
+	local divisor:2 = rsrc;
+	if (divisor == 0) goto <err>;
+	local dividend:4 = (zext(A) << 16) | zext(D);
+	local q:4 = dividend s/ sext(divisor);
+	local r:4 = dividend s% sext(divisor);
+	if (q s> 32767 || q s< -32768) goto <err>;
+	A = q:2;
+	D = r:2;
+	goto <done>;
+	<err>
+	STS[3,1] = 1;
+	<done>
+}
