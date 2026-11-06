@@ -28,3 +28,7 @@
 2. SLEIGH semantics (`data/languages/nd100.slaspec`, `p-codes/*.sinc`, new `nd100_rop.sinc`): STS flag bit fields, overflow
    flag roles, register 0, P, register operations, shifts, bit operations, SKP/RMPY/RDIV, IDENT, JMP modes, JAZ, JPL link value. Details in the commit message.
 3. `README.md`, `GHIDRA-RARE.md`, this file, `test/`.
+4. The `:PROG` loader ranks after Ghidra's Raw Binary loader and is no longer marked preferred. A `:PROG` header is
+   six address words with no magic number, so almost any large enough file passed the probe; ranked first, the
+   loader was used for unrelated files and for every headless `-processor` import of another language. It is still
+   offered: pick it by name (`-loader ProgLoader` headless).

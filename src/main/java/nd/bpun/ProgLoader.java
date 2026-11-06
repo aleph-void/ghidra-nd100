@@ -109,7 +109,7 @@ public class ProgLoader extends AbstractProgramWrapperLoader {
 			return List.of();
 		}
 		LanguageCompilerSpecPair lcs = new LanguageCompilerSpecPair("ND-100:BE:16:default", "default");
-		return List.of(new LoadSpec(this, 0, lcs, true));
+		return List.of(new LoadSpec(this, 0, lcs, false));
 	}
 
 	@Override
@@ -257,14 +257,18 @@ public class ProgLoader extends AbstractProgramWrapperLoader {
 		monitor.setMessage("PROG loading complete");
 	}
 
+	// A :PROG header is six address words with no magic number, so almost any file of the right size
+	// passes probeProg(). The loader ranks after the Raw Binary loader (untargeted, priority 100): Ghidra
+	// imports with the first loader that accepts a file, and a headless import with -processor forces
+	// that language onto it. Pick this loader by name instead.
 	@Override
 	public LoaderTier getTier() {
-		return LoaderTier.SPECIALIZED_TARGET_LOADER;
+		return LoaderTier.UNTARGETED_LOADER;
 	}
 
 	@Override
 	public int getTierPriority() {
-		return 50;
+		return 101;
 	}
 
 	// -----------------------------------------------------------------------
